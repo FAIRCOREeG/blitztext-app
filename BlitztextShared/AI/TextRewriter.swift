@@ -36,9 +36,16 @@ enum TextRewriter {
 
     enum RewriteError: LocalizedError {
         case noModel
+        /// Apple Intelligence on the device gave up, in words for the user.
+        case onDevice(String)
 
         var errorDescription: String? {
-            "Für diesen Modus braucht Blitztext Apple Intelligence oder einen API-Key in den Einstellungen."
+            switch self {
+            case .noModel:
+                return "Für diesen Modus braucht Blitztext Apple Intelligence oder einen API-Key in den Einstellungen."
+            case .onDevice(let message):
+                return message
+            }
         }
     }
 
@@ -74,28 +81,63 @@ enum TextRewriter {
         engine == .automatic && isLocalAvailable
     }
 
-    static func rewrite(_ text: String, instruction: String, engine: Engine) async throws -> String {
+    /// - Parameters:
+    ///   - dictationRules: Adds the rules for reading dictated speech (self-corrections, du/Sie).
+    ///     Their examples name weekdays and numbers, which a small model copies into summaries.
+    ///   - deterministic: On the device, always take the most likely wording, so the same text
+    ///     gives the same result. Providers keep their default sampling.
+    static func rewrite(
+        _ text: String,
+        instruction: String,
+        engine: Engine,
+        dictationRules: Bool = true,
+        deterministic: Bool = false
+    ) async throws -> String {
+        let instruction = dictationRules ? instruction + "\n\n" + ModePrompts.spokenTranscriptRules : instruction
         if runsLocally(engine: engine) {
-            return try await rewriteLocally(text, instruction: instruction)
+            // No silent switch to a provider: the app promises the text stays on the device.
+            return try await rewriteLocally(text, instruction: instruction, deterministic: deterministic)
         }
         guard let config = AIProviderStore.config, AIProviderStore.isConfigured else {
             throw RewriteError.noModel
         }
-        return try await AIClient.complete(
-            instruction: instruction + "\n\n" + ModePrompts.spokenTranscriptRules,
-            text: text,
-            config: config
-        )
+        return try await AIClient.complete(instruction: instruction, text: text, config: config)
     }
 
-    private static func rewriteLocally(_ text: String, instruction: String) async throws -> String {
+    private static func rewriteLocally(_ text: String, instruction: String, deterministic: Bool) async throws -> String {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, macOS 26.0, *) {
-            let session = LanguageModelSession(instructions: instruction + "\n\n" + ModePrompts.spokenTranscriptRules)
-            let response = try await session.respond(to: text)
-            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let session = LanguageModelSession(instructions: instruction)
+            let options = deterministic ? GenerationOptions(sampling: .greedy) : GenerationOptions()
+            do {
+                let response = try await session.respond(to: text, options: options)
+                return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch let error as LanguageModelSession.GenerationError {
+                throw RewriteError.onDevice(Self.message(for: error))
+            }
         }
         #endif
         throw RewriteError.noModel
     }
+
+    #if canImport(FoundationModels)
+    @available(iOS 26.0, macOS 26.0, *)
+    private static func message(for error: LanguageModelSession.GenerationError) -> String {
+        let reason: String
+        switch error {
+        case .exceededContextWindowSize:
+            reason = "Der Text ist zu lang für Apple Intelligence auf dem Gerät."
+        case .guardrailViolation:
+            reason = "Apple Intelligence hat den Text abgelehnt."
+        case .unsupportedLanguageOrLocale:
+            reason = "Apple Intelligence kann diese Sprache auf dem Gerät nicht bearbeiten."
+        default:
+            reason = "Apple Intelligence konnte den Text nicht bearbeiten."
+        }
+        let way = AIProviderStore.isConfigured
+            ? "Mit „\(Engine.provider.displayName)“ in den Einstellungen übernimmt dein Modell-Anbieter."
+            : "Mit einem eigenen API-Key in den Einstellungen geht es über einen Modell-Anbieter."
+        return reason + " " + way
+    }
+    #endif
 }

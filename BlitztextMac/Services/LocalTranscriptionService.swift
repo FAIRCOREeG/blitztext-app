@@ -127,6 +127,11 @@ actor LocalTranscriptionService {
     static let defaultModelName = "openai_whisper-large-v3-v20240930_626MB"
     static let fastModelName = "openai_whisper-large-v3-v20240930_turbo_632MB"
     static let recommendedFastModelName = "openai_whisper-small_216MB"
+    /// What a new Mac starts with: Parakeet Ultra on Apple Silicon (faster and more accurate),
+    /// Whisper Small on Intel.
+    static var initialModelName: String {
+        ParakeetTranscriber.isSupported ? ParakeetTranscriber.modelName : recommendedFastModelName
+    }
     static let modelRepo = "argmaxinc/whisperkit-coreml"
     /// Both builds of Whisper large-v3-turbo carry the same 4-bit weights, so the app lists
     /// them as one model. The streaming build runs about 1.5x faster, but Argmax does not
@@ -214,7 +219,7 @@ actor LocalTranscriptionService {
 
     static func normalizedModelName(_ modelName: String) -> String {
         let trimmed = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? recommendedFastModelName : trimmed
+        return trimmed.isEmpty ? initialModelName : trimmed
     }
 
     static func installedModels() -> [LocalTranscriptionModel] {

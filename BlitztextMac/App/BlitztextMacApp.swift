@@ -31,6 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSApp.terminate(nil)
             return
         }
+        if let file = MacMeetingCheck.file {
+            NSApp.setActivationPolicy(.prohibited)
+            Task {
+                await MacMeetingCheck.run(file)
+                NSApp.terminate(nil)
+            }
+            return
+        }
         #endif
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
@@ -54,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Hotkey events
         appState.hotkeyService.onHotkeyEvent = { [weak self] event in
             self?.handleHotkeyEvent(event)
+        }
+        appState.hotkeyService.isWorkflowRunning = { [weak self] in
+            guard let active = self?.appState.activeWorkflow, case .running = active.phase else { return false }
+            return true
         }
         appState.onMenuBarStatusChange = { [weak self] status in
             self?.menuBarStatusController.update(to: status)
@@ -111,6 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// Finder "Open With", dragging onto the app icon, or `open -a Blitztext file.ogg`.
     func applicationWillTerminate(_ notification: Notification) {
+        // A meeting being recorded stays readable and can be evaluated after the next launch.
+        appState.meeting.finishBeforeQuit()
         appState.restoreAudioOutput()
         // Quitting right after a dictation still gives the previous clipboard back.
         ClipboardPasteService.shared.settleNow()
@@ -191,6 +205,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             handleHotkeyDown(mode)
         case .up(let shortcut):
             handleHotkeyUp(shortcutModes[shortcut] ?? shortcut)
+        case .escape:
+            // In both modes: a recording stops and is transcribed, a transcription or
+            // rewrite still running is cancelled before it pastes.
+            if let active = appState.activeWorkflow, case .running = active.phase {
+                active.stop()
+            }
         }
     }
 
@@ -291,6 +311,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 /// Design reviews: `-BlitztextSnapshotDir /path` renders the popover pages, the settings
 /// panes and the recording pill to PNG files, light and dark, and quits. No status item,
 /// no hotkeys, nothing is recorded. Not compiled into Release builds.
+/// Runs the meeting evaluation on an audio file and prints the result, without microphone,
+/// keychain or stored meetings: `-BlitztextMeetingCheck /path/to/file.m4a`. Uses the installed
+/// Parakeet model and downloads the speaker models if they are missing.
+@MainActor
+enum MacMeetingCheck {
+    static var file: URL? {
+        UserDefaults.standard.string(forKey: "BlitztextMeetingCheck").map { URL(fileURLWithPath: $0) }
+    }
+
+    static func run(_ file: URL) async {
+        let store = MeetingStore(persistent: false)
+        // Only the on-device model, so no API key is read from the keychain.
+        let summarizes = TextRewriter.isLocalAvailable
+        let controller = MeetingController(store: store) {
+            MeetingController.Settings(
+                language: "de",
+                postProcessor: TranscriptPostProcessor(
+                    customTerms: [], replacements: [], correctCustomTerms: false, removeFillerWords: true,
+                    language: "de", isDictionaryWord: DictionaryWordChecker.isKnownWord
+                ),
+                summarizes: summarizes,
+                engine: .automatic
+            )
+        }
+        var audioURL: URL?
+        defer { if let audioURL { try? FileManager.default.removeItem(at: audioURL) } }
+        do {
+            let wav = try AudioFileConverter.convertToWAV(file)
+            let record = MeetingRecord(
+                id: UUID(), createdAt: Date(), title: MeetingRecord.title(startedAt: Date()),
+                duration: wav.duration, status: .pending
+            )
+            try FileManager.default.createDirectory(at: MeetingStore.directoryURL, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: wav.url, to: record.audioURL)
+            audioURL = record.audioURL
+            store.upsert(record)
+            print("Audio: \(Int(wav.duration)) s, summary on device: \(summarizes)")
+
+            let started = Date()
+            var lastStep = ""
+            controller.process(record.id)
+            while true {
+                try await Task.sleep(for: .milliseconds(200))
+                let elapsed = String(format: "%.1f s", Date().timeIntervalSince(started))
+                switch controller.phase {
+                case .processing(let step) where step != lastStep:
+                    print("[\(elapsed)] \(step)")
+                    lastStep = step
+                case .showing(let id):
+                    print("[\(elapsed)] fertig")
+                    guard let result = store.meeting(id: id) else { return }
+                    print("\nPersonen: \(result.speakers.count)\n\n" + result.transcriptText)
+                    print("\n--- Zusammenfassung ---\n" + (result.summary ?? result.summaryNote ?? "keine"))
+                    return
+                case .failed(let message, _):
+                    print("[\(elapsed)] FEHLER: \(message)")
+                    return
+                default:
+                    continue
+                }
+            }
+        } catch {
+            print("FEHLER: \(error.localizedDescription)")
+        }
+    }
+}
+
 @MainActor
 enum MacSnapshots {
     static var folder: URL? {
@@ -309,6 +396,12 @@ enum MacSnapshots {
                 appState.page = page
                 capture(MenuBarView(appState: appState), appearance: appearance, to: folder.appendingPathComponent("\(mode)-\(label).png"))
             }
+            // The setup assistant as on a Mac that has nothing set up yet.
+            SetupAssistantView.debugShowsFreshMac = true
+            appState.page = .onboarding
+            capture(MenuBarView(appState: appState), appearance: appearance, to: folder.appendingPathComponent("\(mode)-onboarding-fresh.png"))
+            SetupAssistantView.debugShowsFreshMac = false
+            renderMeetingPages(appState: appState, appearance: appearance, mode: mode, to: folder)
             for pane in SettingsPane.allCases {
                 SettingsContentView.debugInitialPane = pane
                 appState.page = .settings
@@ -330,6 +423,58 @@ enum MacSnapshots {
         }
         appState.page = .main
     }
+
+    private static func renderMeetingPages(appState: AppState, appearance: NSAppearance?, mode: String, to folder: URL) {
+        let meeting = appState.meeting
+        if meeting.store.meetings.isEmpty {
+            meeting.store.upsert(sampleMeeting)
+        }
+        let phases: [(MeetingController.Phase, String)] = [
+            (.idle, "start"),
+            (.recording(startedAt: Date().addingTimeInterval(-754)), "recording"),
+            (.processing("Stimmen werden erkannt ..."), "processing"),
+            (.showing(sampleMeeting.id), "result"),
+        ]
+        appState.page = .meeting
+        for (phase, label) in phases {
+            meeting.preview(phase)
+            capture(MenuBarView(appState: appState), appearance: appearance, to: folder.appendingPathComponent("\(mode)-meeting-\(label).png"))
+            // The whole result, beyond the popover height.
+            if case .showing = phase {
+                let full = MeetingView(appState: appState, height: 1100)
+                    .frame(width: MenuBarView.width)
+                    .background(BlitztextTheme.page)
+                capture(full, appearance: appearance, to: folder.appendingPathComponent("\(mode)-meeting-result-full.png"))
+            }
+        }
+        meeting.preview(.idle)
+    }
+
+    private static let sampleMeeting = MeetingRecord(
+        id: UUID(uuidString: "5A3B1E00-0000-4000-8000-0000000000AC")!,
+        createdAt: Date(),
+        title: MeetingRecord.title(startedAt: Date()),
+        duration: 62,
+        status: .done,
+        turns: [
+            MeetingTurn(speaker: 1, start: 0, text: "Kurzer Stand zum Workshop: Die Agenda steht, mir fehlt nur noch der Raum."),
+            MeetingTurn(speaker: 2, start: 14, text: "Den Raum buche ich. Sollen wir online oder im B\u{00FC}ro machen?"),
+            MeetingTurn(speaker: 3, start: 31, text: "Lieber online, dann kann das Team aus Hamburg dabei sein."),
+            MeetingTurn(speaker: 1, start: 45, text: "Gut, dann online. Ich schicke die Einladung bis Freitag."),
+        ],
+        speakerNames: [3: "Anna"],
+        summary: """
+        Zusammenfassung
+        Der Workshop findet online statt, damit auch das Team aus Hamburg teilnehmen kann. Die Agenda steht.
+
+        Entscheidungen
+        - Der Workshop findet online statt
+
+        To-dos
+        - Person 1: Einladung schicken (bis Freitag)
+        - Person 2: Raum buchen
+        """
+    )
 
     private static func capture<V: View>(_ view: V, appearance: NSAppearance?, to url: URL) {
         let hosting = NSHostingView(rootView: view)

@@ -58,6 +58,7 @@ final class EmojiTextWorkflow: Workflow {
         if recorder.isRecording {
             recorder.stopRecording()
             guard !TranscriptionQualityService.shouldRejectRecording(duration: recorder.lastRecordingDuration) else {
+                recorder.discardRecording()
                 phase = .error("Keine Aufnahme erkannt.")
                 return
             }
@@ -72,6 +73,7 @@ final class EmojiTextWorkflow: Workflow {
         processingTask?.cancel()
         if recorder.isRecording {
             recorder.stopRecording()
+            recorder.discardRecording()
         }
         phase = .idle
     }
@@ -88,6 +90,8 @@ final class EmojiTextWorkflow: Workflow {
         let recordingDuration = recorder.lastRecordingDuration
 
         processingTask = Task {
+            // The recording is not kept once it is transcribed (docs/privacy.md).
+            defer { try? FileManager.default.removeItem(at: url) }
             do {
                 // Phase 1: local transcription (Parakeet or WhisperKit)
                 let rawText = try await LocalTranscriptionService.transcribe(

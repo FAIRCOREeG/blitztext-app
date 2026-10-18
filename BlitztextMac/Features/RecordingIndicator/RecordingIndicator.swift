@@ -37,7 +37,7 @@ final class RecordingIndicatorController {
             guard panel?.isVisible == true, !isHiding else { return }
             model.status = status
             hide(after: .milliseconds(900))
-        case .idle, .error:
+        case .idle, .error, .meeting:
             hide()
         }
     }
@@ -216,7 +216,7 @@ struct RecordingPill: View {
             Text("Fertig")
                 .font(.ui(12, .semibold))
                 .foregroundStyle(.white.opacity(0.85))
-        case .idle, .error:
+        case .idle, .error, .meeting:
             EmptyView()
         }
     }
@@ -226,7 +226,7 @@ struct RecordingPill: View {
         case .recording: return "Aufnahme l\u{00E4}uft. Klicken stoppt sie."
         case .processing: return "Blitztext schreibt"
         case .success: return "Fertig"
-        case .idle, .error: return ""
+        case .idle, .error, .meeting: return ""
         }
     }
 }

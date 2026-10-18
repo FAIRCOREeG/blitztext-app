@@ -63,6 +63,7 @@ Keyboards without `fn`: set your own shortcut per mode in the settings.
 - **See that it listens:** a small lilac pill at the bottom of the screen moves with your voice while Blitztext records. Click it to stop. It never takes the focus, so the text still lands where you type. You can turn it off in the settings.
 - **Last text at hand:** the menu bar window shows your last text as a message. One click copies it.
 - **Sound off while recording:** a podcast or music is muted while you speak and back right after.
+- **Meetings in the room:** record a conversation through the microphone, get the transcript by person (Person 1, Person 2, rename them) and, if you like, a summary with decisions and to-dos. Speaker detection and the summary run on your Mac; the recording is deleted afterwards. Apple Silicon only.
 - **Voice memos and WhatsApp voice messages:** drop an audio file on Blitztext and get the text, optionally with paragraphs.
 - **Dictionary:** names and terms spelled your way, fixed replacements ("n acht n" becomes "n8n").
 - **History:** recent results, encrypted and stored only on your Mac.
@@ -102,7 +103,7 @@ Blitztext has no backend and collects no data. Details in [docs/privacy.md](docs
 ## Known Limitations
 
 - **`fn` shortcuts** only work on Apple keyboards. Set your own shortcut for other keyboards.
-- **Paste stops after an update or a rebuild:** open System Settings > Privacy & Security > Accessibility, remove the old Blitztext entry, add the current app and restart it.
+- **Paste stops after an update or a rebuild:** in the settings under Allgemein, click "Freigabe zurücksetzen" and allow Blitztext again. By hand: System Settings > Privacy & Security > Accessibility, remove the old Blitztext entry, add the current app and restart it.
 - **First dictation after a macOS update** can take a few minutes while macOS prepares the model for the Neural Engine. Blitztext shows a hint; keep it running.
 - **Whisper on silence** sometimes invents phrases like "Thank you." Blitztext filters the known ones.
 - **Macs managed with Jamf:** in-app updates are off on the whole Mac, also for a copy you installed yourself. There, your device management handles updates.

@@ -123,8 +123,12 @@ struct AppSettings: Codable {
     var hasSeenOnboarding: Bool = false
     /// Where Blitztext+, $%&! and :) run their AI step. Transcription is always local.
     var rewriteEngine: TextRewriter.Engine = .automatic
-    var selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName
+    var selectedLocalTranscriptionModelName: String = LocalTranscriptionService.initialModelName
     var hasAutoSelectedFastLocalModel: Bool = false
+    /// The one-time switch from Whisper Small to Parakeet Ultra for Macs without a model ran.
+    var hasCheckedParakeetDefault: Bool = false
+    /// Macs that already had a model when the setup assistant arrived were marked as set up.
+    var hasMigratedToSetupAssistant: Bool = false
     /// Optional shortcuts per workflow (keyed by `WorkflowType.rawValue`) for non-Apple keyboards.
     var customHotkeys: [String: KeyCombo] = [:]
     var restoreClipboardAfterPaste: Bool = true
@@ -147,11 +151,14 @@ struct AppSettings: Codable {
     var automaticParagraphs: Bool = false
     /// A small lilac pill at the bottom of the screen while recording and processing.
     var showsRecordingIndicator: Bool = true
+    /// Write the summary right after a meeting. Off: transcript by person only, faster;
+    /// the summary can still be created later.
+    var summarizesMeetings: Bool = true
 
     init(
         hotkeyMode: HotkeyMode = .hold,
         hasSeenOnboarding: Bool = false,
-        selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName,
+        selectedLocalTranscriptionModelName: String = LocalTranscriptionService.initialModelName,
         hasAutoSelectedFastLocalModel: Bool = false
     ) {
         self.hotkeyMode = hotkeyMode
@@ -166,6 +173,8 @@ struct AppSettings: Codable {
         case rewriteEngine
         case selectedLocalTranscriptionModelName
         case hasAutoSelectedFastLocalModel
+        case hasCheckedParakeetDefault
+        case hasMigratedToSetupAssistant
         case customHotkeys
         case restoreClipboardAfterPaste
         case correctCustomTermsEnabled
@@ -179,6 +188,7 @@ struct AppSettings: Codable {
         case muteOutputWhileRecording
         case automaticParagraphs
         case showsRecordingIndicator
+        case summarizesMeetings
     }
 
     init(from decoder: Decoder) throws {
@@ -189,11 +199,13 @@ struct AppSettings: Codable {
         selectedLocalTranscriptionModelName = try container.decodeIfPresent(
             String.self,
             forKey: .selectedLocalTranscriptionModelName
-        ) ?? LocalTranscriptionService.recommendedFastModelName
+        ) ?? LocalTranscriptionService.initialModelName
         hasAutoSelectedFastLocalModel = try container.decodeIfPresent(
             Bool.self,
             forKey: .hasAutoSelectedFastLocalModel
         ) ?? false
+        hasCheckedParakeetDefault = try container.decodeIfPresent(Bool.self, forKey: .hasCheckedParakeetDefault) ?? false
+        hasMigratedToSetupAssistant = try container.decodeIfPresent(Bool.self, forKey: .hasMigratedToSetupAssistant) ?? false
         customHotkeys = (try? container.decodeIfPresent([String: KeyCombo].self, forKey: .customHotkeys)) ?? [:]
         restoreClipboardAfterPaste = try container.decodeIfPresent(Bool.self, forKey: .restoreClipboardAfterPaste) ?? true
         correctCustomTermsEnabled = try container.decodeIfPresent(Bool.self, forKey: .correctCustomTermsEnabled) ?? true
@@ -207,6 +219,7 @@ struct AppSettings: Codable {
         muteOutputWhileRecording = try container.decodeIfPresent(Bool.self, forKey: .muteOutputWhileRecording) ?? true
         automaticParagraphs = try container.decodeIfPresent(Bool.self, forKey: .automaticParagraphs) ?? false
         showsRecordingIndicator = try container.decodeIfPresent(Bool.self, forKey: .showsRecordingIndicator) ?? true
+        summarizesMeetings = try container.decodeIfPresent(Bool.self, forKey: .summarizesMeetings) ?? true
     }
 
     func customHotkey(for type: WorkflowType) -> KeyCombo? {

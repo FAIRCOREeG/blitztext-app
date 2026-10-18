@@ -12,13 +12,41 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     private var audioRecorder: AVAudioRecorder?
     private var levelTimer: Timer?
 
-    private var fileURL: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("recording.m4a")
+    /// One file per recording: deleting one after its transcription never hits the next.
+    private var fileURL = AudioRecorder.newFileURL()
+
+    private static func newFileURL() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("recording-\(UUID().uuidString).m4a")
+    }
+
+    /// Deletes this recorder's audio, for recordings that are not transcribed.
+    func discardRecording() {
+        try? FileManager.default.removeItem(at: fileURL)
+        recordingURL = nil
+    }
+
+    /// Recordings a crash or quit left behind; nothing records while the app starts.
+    static func removeLeftoverRecordings() {
+        let temp = FileManager.default.temporaryDirectory
+        let files = (try? FileManager.default.contentsOfDirectory(at: temp, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasPrefix("recording") && file.pathExtension == "m4a" {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     func startRecording() {
         errorMessage = nil
         lastRecordingDuration = 0
+        fileURL = Self.newFileURL()
+
+        // Without access macOS records silence; say why instead of "Keine Aufnahme erkannt".
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            errorMessage = MicrophonePermission.deniedMessage
+            return
+        default:
+            break
+        }
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -31,7 +59,11 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
             audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
             audioRecorder?.delegate = self
             audioRecorder?.isMeteringEnabled = true
-            audioRecorder?.record()
+            guard audioRecorder?.record() == true else {
+                audioRecorder = nil
+                errorMessage = "Die Aufnahme lie\u{00DF} sich nicht starten. Darf Blitztext das Mikrofon nutzen?"
+                return
+            }
             isRecording = true
             recordingURL = nil
             startMetering()

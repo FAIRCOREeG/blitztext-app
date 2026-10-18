@@ -6,6 +6,8 @@ enum MenuBarStatus: Equatable {
     case processing(WorkflowType)
     case success(WorkflowType?)
     case error(WorkflowType?)
+    /// A meeting is being recorded; shown while no dictation is active.
+    case meeting
 }
 
 @MainActor
@@ -97,6 +99,8 @@ final class MenuBarStatusController {
                 return "\(type.displayName): Fehler"
             }
             return "Blitztext: Fehler"
+        case .meeting:
+            return "Meeting: Aufnahme l\u{00E4}uft"
         }
     }
 
@@ -148,6 +152,8 @@ private enum MenuBarStatusIconRenderer {
                 drawBadge(systemName: "checkmark", in: bounds, fillOpacity: 1.0)
             case .error:
                 drawBadge(systemName: "exclamationmark", in: bounds, fillOpacity: 1.0)
+            case .meeting:
+                drawBadge(systemName: "record.circle", in: bounds, fillOpacity: 1.0)
             default:
                 break
             }
@@ -292,7 +298,7 @@ private enum MenuBarStatusIconRenderer {
 
     private static func baseAlphaValues(for status: MenuBarStatus, frame: Int) -> [CGFloat] {
         switch status {
-        case .idle:
+        case .idle, .meeting:
             return [1.0, 0.82, 0.64, 0.46]
         case .recording(let type):
             return recordingAlphaValues(for: type, frame: frame)

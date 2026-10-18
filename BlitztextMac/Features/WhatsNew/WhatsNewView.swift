@@ -4,7 +4,7 @@ import SwiftUI
 /// or right after the first dictation for people who only use the shortcuts.
 enum WhatsNew {
     /// Bump together with the items when a release deserves a note.
-    static let version = "1.13"
+    static let version = "1.14"
 
     struct Item: Identifiable {
         let icon: String
@@ -15,14 +15,19 @@ enum WhatsNew {
 
     static let items: [Item] = [
         Item(
-            icon: "bubble.left.fill",
-            title: "Neues Aussehen",
-            detail: "Blitztext sieht jetzt aus wie auf dem iPhone: klare Karten, Blackboat-Farben und die Sprechblase. Die Modi zeigen ihre Farbe, dein letzter Text steht als Nachricht bereit und ist mit einem Klick kopiert."
+            icon: "person.2.wave.2.fill",
+            title: "Meetings aufnehmen",
+            detail: "Oben im Men\u{00FC} auf \u{201E}Meeting\u{201C}: Blitztext nimmt ein Gespr\u{00E4}ch im Raum auf, erkennt, wer spricht, und schreibt auf Wunsch eine Zusammenfassung mit To-dos. Alles l\u{00E4}uft auf diesem Mac, die Aufnahme wird danach gel\u{00F6}scht."
         ),
         Item(
-            icon: "waveform",
-            title: "Aufnahme sichtbar",
-            detail: "Unten am Bildschirm zeigt eine kleine lila Anzeige, dass Blitztext zuh\u{00F6}rt. Sie bewegt sich mit deiner Stimme, ein Klick stoppt die Aufnahme. Abschalten kannst du sie unter Einstellungen, Allgemein."
+            icon: "keyboard",
+            title: "K\u{00FC}rzel zuverl\u{00E4}ssiger",
+            detail: "Die fn-K\u{00FC}rzel gehen jetzt auch mit Feststelltaste, und Escape stoppt eine Aufnahme auch im Modus \u{201E}Dr\u{00FC}cken\u{201C}."
+        ),
+        Item(
+            icon: "checklist",
+            title: "Einrichtung Schritt f\u{00FC}r Schritt",
+            detail: "Neue Macs f\u{00FC}hrt ein Assistent durch Mikrofon, Einf\u{00FC}gen und Sprachmodell, mit Parakeet Ultra als Standard. Fehlt die Mikrofon-Freigabe, sagt Blitztext das jetzt klar."
         ),
     ]
 }
