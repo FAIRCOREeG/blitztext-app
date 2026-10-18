@@ -246,9 +246,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             appState.startWorkflow(type, source: .hotkeyBackground)
 
         case .toggle:
-            appState.prepareForPopoverPresentation()
-            appState.startWorkflow(type, source: .manual)
-            showPopover()
+            if appState.appSettings.showsRecordingIndicator {
+                // The pill shows the recording, so the menu stays closed and the text goes
+                // back to the app in use. Pressing again, Escape or a click on the pill stops.
+                appState.startWorkflow(type, source: .hotkeyBackground)
+            } else {
+                appState.prepareForPopoverPresentation()
+                appState.startWorkflow(type, source: .manual)
+                showPopover()
+            }
         }
     }
 

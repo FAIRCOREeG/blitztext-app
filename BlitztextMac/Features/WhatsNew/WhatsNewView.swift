@@ -22,7 +22,7 @@ enum WhatsNew {
         Item(
             icon: "keyboard",
             title: "K\u{00FC}rzel zuverl\u{00E4}ssiger",
-            detail: "Die fn-K\u{00FC}rzel gehen jetzt auch mit Feststelltaste, und Escape stoppt eine Aufnahme auch im Modus \u{201E}Dr\u{00FC}cken\u{201C}."
+            detail: "Die fn-K\u{00FC}rzel gehen jetzt auch mit Feststelltaste. Im Modus \u{201E}Dr\u{00FC}cken\u{201C} bleibt das Men\u{00FC} zu, die lila Anzeige zeigt die Aufnahme, und Escape oder ein anderes K\u{00FC}rzel beendet sie, ohne dass etwas verloren geht."
         ),
         Item(
             icon: "checklist",
