@@ -9,6 +9,7 @@ enum PopoverPage: Equatable {
     case workflow
     case history
     case audioFile
+    case meeting
     case whatsNew
 }
 
@@ -22,10 +23,16 @@ final class AppState {
     var menuBarStatus: MenuBarStatus = .idle {
         didSet {
             guard oldValue != menuBarStatus else { return }
-            onMenuBarStatusChange?(menuBarStatus)
+            publishMenuBarStatus()
         }
     }
+
+    /// While a meeting records, the resting menu bar icon shows that instead of idle.
+    func publishMenuBarStatus() {
+        onMenuBarStatusChange?(menuBarStatus == .idle && meeting.isRecording ? .meeting : menuBarStatus)
+    }
     var accessibilityPermissionGranted = false
+    var microphoneDenied = false
     var localModelDownloadProgress: Double?
     var localModelDownloadStatusText: String?
     var localModelDownloadErrorText: String?
@@ -79,6 +86,14 @@ final class AppState {
     let appUpdateService = AppUpdateService()
     let history: TranscriptHistoryStore
     let audioFile = AudioFileController()
+    @ObservationIgnored private(set) lazy var meeting = MeetingController(store: MeetingStore(persistent: !Self.isToolRun)) { [unowned self] in
+        MeetingController.Settings(
+            language: self.transcriptionSettings.language,
+            postProcessor: self.postProcessor,
+            summarizes: self.appSettings.summarizesMeetings,
+            engine: self.appSettings.rewriteEngine
+        )
+    }
 
     // Computed
     /// Ready once a local speech model is installed; transcription always runs on this Mac.
@@ -112,12 +127,38 @@ final class AppState {
         _ = aiProvider
         return TextRewriter.canRewrite(engine: appSettings.rewriteEngine)
     }
+    /// The setup assistant opens until it is finished or put off with "Später". Granting a
+    /// permission closes the popover, so showing it once is not enough.
     var shouldShowOnboarding: Bool {
-        !isConfigured && !appSettings.hasSeenOnboarding
+        (!appSettings.hasSeenOnboarding || keepsSetupAssistantOpen) && !isSetupComplete
     }
+
+    /// Microphone, Accessibility and the selected speech model: what dictation needs.
+    var isSetupComplete: Bool {
+        selectedLocalModelIsInstalled && accessibilityPermissionGranted && MicrophonePermission.isAuthorized
+    }
+
+    /// Opened again from the "Einrichtung starten" card: it comes back like on the first
+    /// run until it is done or closed.
+    var keepsSetupAssistantOpen = false
+    /// "Bedienungshilfen öffnen" was pressed; the assistant then offers the reset for a stale
+    /// grant. Kept here because the assistant's view goes when System Settings closes the popover.
+    var hasRequestedAccessibility = false
+
 
     var currentPhase: WorkflowPhase {
         activeWorkflow?.phase ?? .idle
+    }
+
+    /// Snapshot runs and meeting checks (debug tools): no keychain, no model loading, no
+    /// settings changes.
+    static var isToolRun: Bool {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "BlitztextSnapshotDir") != nil
+            || UserDefaults.standard.string(forKey: "BlitztextMeetingCheck") != nil
+        #else
+        false
+        #endif
     }
 
     init() {
@@ -128,13 +169,14 @@ final class AppState {
         self.dampfAblassenSettings = Self.loadDampfAblassenSettings()
         self.emojiTextSettings = Self.loadEmojiTextSettings()
         self.history = TranscriptHistoryStore(retention: loadedAppSettings.historyRetention)
-        #if DEBUG
-        // Snapshot runs only draw: no keychain, no model loading, no settings changes.
-        if UserDefaults.standard.string(forKey: "BlitztextSnapshotDir") != nil { return }
-        #endif
+        if Self.isToolRun { return }
+        meeting.onPhaseChange = { [unowned self] in self.publishMenuBarStatus() }
         hotkeyService.updateCustomHotkeys(appSettings.resolvedCustomHotkeys)
         refreshAccessibilityPermission()
+        migrateToSetupAssistant()
         KeychainService.removeLegacyServerCredentials()
+        AudioRecorder.removeLeftoverRecordings()
+        preferParakeetIfNothingInstalled()
         autoSelectFastLocalModelIfNeeded()
         prewarmLocalTranscriptionIfNeeded()
         upgradeParakeetIfNeeded()
@@ -442,18 +484,52 @@ final class AppState {
 
     func prepareForPopoverPresentation() {
         lastPopoverPasteTarget = captureCurrentFrontmostApp()
+        microphoneDenied = MicrophonePermission.isDenied
+        noteSetupProgress()
         history.prune()
+        // A running file transcription or meeting comes before the assistant.
+        let hasWorkInProgress = audioFile.isWorking || meeting.isRecording || meeting.isProcessing
         if let activeWorkflow, activeWorkflow.phase.isActive {
             page = .workflow
-        } else if shouldShowOnboarding {
+        } else if shouldShowOnboarding, !hasWorkInProgress {
             page = .onboarding
-            markOnboardingSeen()
         } else if hasUnseenWhatsNew {
             page = .whatsNew
         } else if page == .workflow {
             page = .main
         } else if page == .onboarding {
             page = .main
+        }
+    }
+
+    /// "Los geht's" or "Später": the assistant does not open by itself again.
+    func finishSetupAssistant() {
+        markOnboardingSeen()
+        keepsSetupAssistantOpen = false
+        page = .main
+    }
+
+    /// From the "Einrichtung starten" card on the main page.
+    func openSetupAssistant() {
+        keepsSetupAssistantOpen = true
+        page = .onboarding
+    }
+
+    /// A finished setup counts as seen however it was reached, so "What's new" works and the
+    /// assistant does not return if a permission is withdrawn later.
+    func noteSetupProgress() {
+        guard isSetupComplete else { return }
+        markOnboardingSeen()
+        keepsSetupAssistantOpen = false
+    }
+
+    /// Macs set up before the assistant existed (a model is already there) never get it as a
+    /// new install; their "What's new" stays as it is.
+    private func migrateToSetupAssistant() {
+        guard !appSettings.hasMigratedToSetupAssistant else { return }
+        appSettings.hasMigratedToSetupAssistant = true
+        if isConfigured, !appSettings.hasSeenOnboarding {
+            appSettings.hasSeenOnboarding = true
         }
     }
 
@@ -544,9 +620,11 @@ final class AppState {
         if MacSnapshots.folder != nil { return }
         #endif
         accessibilityPermissionGranted = AccessibilityPermissionService.currentStatus()
+        microphoneDenied = MicrophonePermission.isDenied
     }
 
     func requestAccessibilityPermission() {
+        hasRequestedAccessibility = true
         accessibilityPermissionGranted = AccessibilityPermissionService.requestPermissionPrompt()
         AccessibilityPermissionService.openSystemSettings()
 
@@ -563,6 +641,20 @@ final class AppState {
         guard await AccessibilityPermissionService.resetPermission() else { return false }
         requestAccessibilityPermission()
         return true
+    }
+
+    /// Up to 1.13 a new Mac started with Whisper Small selected. On Apple Silicon Parakeet
+    /// Ultra is the better choice; switch while nothing has been downloaded yet.
+    private func preferParakeetIfNothingInstalled() {
+        // Once only, so a later deliberate choice of Whisper Small is kept.
+        guard !appSettings.hasCheckedParakeetDefault else { return }
+        appSettings.hasCheckedParakeetDefault = true
+        guard ParakeetTranscriber.isSupported,
+              LocalTranscriptionService.installedModels().isEmpty,
+              appSettings.selectedLocalTranscriptionModelName == LocalTranscriptionService.recommendedFastModelName else {
+            return
+        }
+        appSettings.selectedLocalTranscriptionModelName = ParakeetTranscriber.modelName
     }
 
     private func autoSelectFastLocalModelIfNeeded() {
@@ -660,6 +752,7 @@ final class AppState {
 
         case .error:
             menuBarStatus = .error(workflow.type)
+            microphoneDenied = MicrophonePermission.isDenied
             if activeLaunchSource == .hotkeyBackground {
                 activeWorkflow = nil
                 activePasteTarget = nil

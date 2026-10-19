@@ -50,6 +50,7 @@ final class TranscriptionWorkflow: Workflow {
         if recorder.isRecording {
             recorder.stopRecording()
             guard !TranscriptionQualityService.shouldRejectRecording(duration: recorder.lastRecordingDuration) else {
+                recorder.discardRecording()
                 phase = .error("Keine Aufnahme erkannt.")
                 return
             }
@@ -64,6 +65,7 @@ final class TranscriptionWorkflow: Workflow {
         transcriptionTask?.cancel()
         if recorder.isRecording {
             recorder.stopRecording()
+            recorder.discardRecording()
         }
         phase = .idle
     }
@@ -83,6 +85,8 @@ final class TranscriptionWorkflow: Workflow {
         let stopTime = Date()
 
         transcriptionTask = Task(priority: .userInitiated) {
+            // The recording is not kept once it is transcribed (docs/privacy.md).
+            defer { try? FileManager.default.removeItem(at: url) }
             let requestStart = Date()
             do {
                 let text = try await LocalTranscriptionService.transcribe(

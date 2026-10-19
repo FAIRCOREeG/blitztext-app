@@ -11,7 +11,7 @@ struct MenuBarView: View {
             case .main:
                 mainPage
             case .onboarding:
-                onboardingPage
+                SetupAssistantView(appState: appState)
             case .settings:
                 settingsPage
             case .workflow:
@@ -20,6 +20,8 @@ struct MenuBarView: View {
                 historyPage
             case .audioFile:
                 AudioFileView(appState: appState)
+            case .meeting:
+                MeetingView(appState: appState)
             case .whatsNew:
                 WhatsNewView(appState: appState)
             }
@@ -68,6 +70,30 @@ struct MenuBarView: View {
                     )
                 }
 
+                if appState.microphoneDenied {
+                    NoticeRow(
+                        icon: "mic.slash.fill",
+                        title: "Aufnehmen braucht das Mikrofon",
+                        detail: "Blitztext ist in den Systemeinstellungen f\u{00FC}r das Mikrofon nicht erlaubt.",
+                        tint: BlitztextTheme.danger,
+                        actionTitle: "\u{00D6}ffnen",
+                        action: {
+                            MicrophonePermission.openSystemSettings()
+                            // Back from System Settings, the notice follows the new state.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { appState.refreshAccessibilityPermission() }
+                        }
+                    )
+                }
+
+                if appState.meeting.isRecording || appState.meeting.isProcessing {
+                    NoticeRow(
+                        icon: "person.2.wave.2.fill",
+                        title: appState.meeting.isRecording ? "Meeting wird aufgenommen" : "Meeting wird ausgewertet",
+                        actionTitle: "\u{00D6}ffnen",
+                        action: { appState.page = .meeting }
+                    )
+                }
+
                 dictationCard
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -111,6 +137,16 @@ struct MenuBarView: View {
             Spacer(minLength: 0)
 
             Button {
+                appState.page = .meeting
+            } label: {
+                Label("Meeting", systemImage: "person.2.wave.2.fill")
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .buttonStyle(.glassAction)
+            .help("Ein Meeting im Raum aufnehmen: Transkript mit Personen und auf Wunsch Zusammenfassung")
+
+            Button {
                 appState.page = .settings
             } label: {
                 Image(systemName: "gearshape")
@@ -132,14 +168,14 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Einrichtung n\u{00F6}tig")
                 .font(.ui(17, .bold))
-            Text("Installiere in den Einstellungen ein lokales Sprachmodell. Blitztext transkribiert direkt auf diesem Mac.")
+            Text("Der Assistent f\u{00FC}hrt durch Mikrofon, Einf\u{00FC}gen und Sprachmodell. Blitztext transkribiert direkt auf diesem Mac.")
                 .font(.ui(12.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
-                appState.page = .settings
+                appState.openSetupAssistant()
             } label: {
-                Label("Einstellungen \u{00F6}ffnen", systemImage: "slider.horizontal.3")
+                Label("Einrichtung starten", systemImage: "checklist")
             }
             .buttonStyle(.filledAction)
             .padding(.top, 2)
@@ -386,92 +422,6 @@ struct MenuBarView: View {
     }
 
     // MARK: - Onboarding
-
-    private var onboardingPage: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Willkommen")
-                        .font(BlackboatType.publicSans(20, .bold, relativeTo: .title3))
-                    Text("bei Blitztext")
-                        .font(.ui(12, .medium))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Sp\u{00E4}ter") {
-                    appState.page = .main
-                }
-                .font(.ui(12))
-                .foregroundStyle(.secondary)
-                .buttonStyle(.subtle)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-
-            Divider().opacity(0.16)
-
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Einmal einrichten, dann direkt loslegen.")
-                        .font(BlackboatType.publicSans(18, .semibold, relativeTo: .headline))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Ein lokales Sprachmodell reicht. Danach sprechen und einf\u{00FC}gen, alles auf diesem Mac.")
-                        .font(.ui(12.5))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if BlitztextInstallLocationService.shouldOfferMoveToApplications {
-                    NoticeRow(
-                        icon: "arrow.down.app",
-                        title: "Lege Blitztext zuerst nach /Applications",
-                        detail: "So startet Blitztext zuverl\u{00E4}ssig mit dem Mac und bekommt Updates."
-                    )
-                }
-
-                VStack(alignment: .leading, spacing: 0) {
-                    onboardingStep(number: "1", title: "Sprachmodell laden", detail: "In den Einstellungen ein lokales Modell installieren, zum Beispiel Parakeet Ultra.")
-                    Divider().opacity(0.18)
-                    onboardingStep(number: "2", title: "Berechtigungen erlauben", detail: "Mikrofon und Bedienungshilfen f\u{00FC}r das Einf\u{00FC}gen freigeben.")
-                    Divider().opacity(0.18)
-                    onboardingStep(number: "3", title: "Modus w\u{00E4}hlen", detail: "Per Tastenk\u{00FC}rzel oder direkt aus der Men\u{00FC}leiste starten.")
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
-                .glassPanel()
-
-                Button {
-                    appState.page = .settings
-                } label: {
-                    Label("Jetzt einrichten", systemImage: "slider.horizontal.3")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.filledAction)
-            }
-            .padding(16)
-        }
-    }
-
-    private func onboardingStep(number: String, title: String, detail: String) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(number)
-                .font(.ui(12, .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(BlitztextTheme.tonal))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.ui(13, .semibold))
-                Text(detail)
-                    .font(.ui(11.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.vertical, 10)
-    }
 
     // MARK: - Settings Page
 

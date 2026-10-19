@@ -99,6 +99,15 @@ actor ParakeetTranscriber {
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Transcribes a whole file and returns its words with timestamps, e.g. for
+    /// assigning a meeting transcript to speakers.
+    func transcribeWords(audioURL: URL, language: String) async throws -> [TimedWord] {
+        let manager = try await loadedManager()
+        var decoderState = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+        let result = try await manager.transcribe(audioURL, decoderState: &decoderState, language: Language(rawValue: language.lowercased()))
+        return TimedWord.words(from: (result.tokenTimings ?? []).map { ($0.token, $0.startTime, $0.endTime) })
+    }
+
     /// One download at a time, whether the user started it or the upgrade did.
     private func downloadUltra(progressHandler: @escaping @Sendable (Double) -> Void) async throws {
         if let downloadTask {

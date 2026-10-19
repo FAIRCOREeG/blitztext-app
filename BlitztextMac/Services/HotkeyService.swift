@@ -25,6 +25,7 @@ enum HotkeyMode: String, Codable, CaseIterable, Identifiable {
 enum HotkeyEvent {
     case down(WorkflowType)  // Keys pressed
     case up(WorkflowType)    // Keys released (for hold mode)
+    case escape              // Stops a running recording, in both modes
 }
 
 @Observable
@@ -33,6 +34,7 @@ final class HotkeyService {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var keyMonitor: Any?
+    private var localKeyMonitor: Any?
     private var activeCombo: WorkflowType?  // Which fn combo is currently held
     private var activeCustomCombo: WorkflowType?  // Which custom shortcut is currently held
     private let carbonRegistrar = CarbonHotkeyRegistrar()
@@ -40,6 +42,12 @@ final class HotkeyService {
     private var customHotkeysSuspended = false
 
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
+    /// Whether a dictation is recording or being processed. Only then does Escape get taken
+    /// from the frontmost app.
+    var isWorkflowRunning: (() -> Bool)?
+    /// Escape ended a dictation while its keys were still held: ignore the keys until fn is
+    /// let go, so releasing one of three keys does not start a new dictation.
+    private var ignoresHeldKeys = false
     /// Workflows whose custom shortcut macOS refused to register (e.g. already taken).
     private(set) var failedCustomHotkeys: Set<WorkflowType> = []
 
@@ -63,7 +71,8 @@ final class HotkeyService {
             }
             return event
         }
-        // Escape key monitor for toggle mode
+        // Escape stops a recording: in other apps through the global monitor, and while the
+        // popover makes Blitztext frontmost (Drücken mode) through the local one.
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             Task { @MainActor in
                 if event.keyCode == 53 { // Escape
@@ -71,15 +80,26 @@ final class HotkeyService {
                 }
             }
         }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            let handled: Bool = MainActor.assumeIsolated {
+                guard let self, self.isWorkflowRunning?() == true else { return false }
+                self.handleEscape()
+                return true
+            }
+            return handled ? nil : event
+        }
     }
 
     func stop() {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        if let localKeyMonitor { NSEvent.removeMonitor(localKeyMonitor) }
         globalMonitor = nil
         localMonitor = nil
         keyMonitor = nil
+        localKeyMonitor = nil
         carbonRegistrar.unregisterAll()
     }
 
@@ -148,7 +168,11 @@ final class HotkeyService {
     }
 
     private func handleFlags(_ event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let flags = ShortcutModifiers.normalized(event.modifierFlags)
+        if ignoresHeldKeys {
+            guard !flags.contains(.function) else { return }
+            ignoresHeldKeys = false
+        }
 
         if let match = Self.fnCombos.first(where: { $0.flags == flags }) {
             if activeCombo == nil, !customHotkeysSuspended, !isReplacedByCustomShortcut(match.type) {
@@ -166,21 +190,11 @@ final class HotkeyService {
     }
 
     private func handleEscape() {
-        // Escape acts like releasing keys in toggle mode
-        if let combo = activeCustomCombo {
-            activeCustomCombo = nil
-            onHotkeyEvent?(.up(combo))
-        } else if let combo = activeCombo {
-            activeCombo = nil
-            onHotkeyEvent?(.up(combo))
-        } else {
-            // Even without tracked combo, signal escape to stop any recording
-            onHotkeyEvent?(.up(.tapTalk))
-            onHotkeyEvent?(.up(.localTapTalk))
-            onHotkeyEvent?(.up(.textImprover))
-            onHotkeyEvent?(.up(.dampfAblassen))
-            onHotkeyEvent?(.up(.emojiText))
-        }
+        // Releasing the keys after Escape must neither stop again nor start anew.
+        ignoresHeldKeys = activeCombo != nil
+        activeCustomCombo = nil
+        activeCombo = nil
+        onHotkeyEvent?(.escape)
     }
 
     nonisolated deinit {}
